@@ -1,0 +1,220 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+The Lalonde data set (LaLonde, 1986; Dehejia and Wahba, 1999, 2002) is a classic in causal inference.
+In this data set, treatment refers to enrollment in a labour training program (the National Supported Work Demonstration) and control to not enrollment in the program.
+The goal is to evaluate the effect of the labour training program on the earnings of disadvantaged workers.
+
+The data set contains 445 observations, corresponding to 185 treated and 260 control workers, and ten variables. 
+The treatment assignment indicator is the first variable of the data frame: treatment (1 = treated; 0 = control). 
+The next seven variables are the covariates.
+The last variable is the outcome, earnings after the labour training program.
+
+## Question 1
+
+Load and examine the data.  Provide basic summary statistics of all the variables in the data set.
+
+```{r}
+load("lalonde.rda")
+summary(lalonde)
+```
+
+## Question 2
+
+Assess covariate balance across the treatment groups.
+For this, compute the absolute standardized differences in means in the covariates,
+$$ASMD(x)=\frac{\bar{x}_{t}-{\bar{x}_{c}}}{\sqrt{\frac{s^{2}_{t} + s^{2}_{c}}{2}}},$$
+where $\bar{x}_{t}$ ($\bar{x}_{c}$) and $s^{2}_{t}$ ($s^{2}_{c}$) are the means and sample variances of covariate $x$ in the treatment (control) group, respectively. 
+ASMDs greater than 0.2 are often considered as substantial covariate imbalances (Rosenbaum and Rubin, 1985).
+Comment on covariate balance.
+What is wrong with taking a simple (unadjusted) difference in means in the outcomes to estimate the average effect of treatment?
+
+```{r}
+attach(lalonde)
+
+table(treatment)
+
+vars = cbind(age, education, black, hispanic, married, nodegree, re74, re75)
+
+library("designmatch")
+
+meantab(vars, treatment, which(treatment==1), which(treatment==0))
+```
+
+## Question 3
+
+Estimate the average effect by using OLS regression and explaining the outcome 're78' on the treatment indicator and all the other covariates.  Comment on the robustness/validity of this procedure.
+
+```{r}
+lr_model  = lm(re78 ~ treatment + age + education + black + hispanic + married + nodegree + re74 + re75, data = lalonde)
+
+summary(lr_model)
+```
+
+## Question 4
+
+Now, estimate the propensity score using logistic regression.
+
+```{r}
+ps_model = glm(treatment ~ age + education + black + hispanic + married + nodegree + re74 + re75, data = lalonde, family = binomial())
+```
+
+## Question 5
+
+Assess overlap on the estimated propensity score.  Provide summary statistics and boxplots for the estimated propensity scores for treated and control subjects. Interpret the results.
+
+```{r}
+ps_est = ps_model$fit
+
+boxplot(ps_est[treatment==1], ps_est[treatment==0], ylim = c(0, 1), names = c("Treatment", "Control"))
+```
+
+## Question 6
+
+Match treated and control subjects using neareast neighbor matching on the estimated propensity score.  For this, you may use the R packages 'MatchIt' or 'optmatch.'
+
+```{r}
+# Here we use the package 'designmatch,' also freely available from CRAN (see below for an example using 'MatchIt' from Ho et al. 2007)
+
+# Treatment indicator
+t_ind = treatment
+
+# Note that the treatment indicator -- and, correspondingly, the data -- needs to be sorted in decreasing order
+t_ind 
+
+# Matrix of covariates
+X_mat = cbind(age, education, black, hispanic, married, nodegree, re74, re75)
+
+# Distance matrix
+dist_mat = abs(outer(ps_est[treatment==1], ps_est[treatment==0], "-"))
+
+# Subset matching weight
+subset_weight = NULL
+
+# Total pairs to be matched
+total_groups = sum(t_ind)
+
+# Solver options
+t_max = 60*5
+solver = "glpk"
+approximate = 1
+solver = list(name = solver, t_max = t_max, approximate = approximate, round_cplex = 0, trace_cplex = 0)
+
+# Match                   
+out = bmatch(t_ind = t_ind, dist_mat = dist_mat, total_groups = total_groups, solver = solver)              
+              
+# Indices of the treated units and matched controls
+t_id = out$t_id  
+c_id = out$c_id	
+
+# Total number of matched pairs
+length(t_id)
+```
+
+## Question 7
+
+Assess covariate balance after matching.  For this, compute the absolute standardized differences in means in the covariates after matching (Rosenbaum and Rubin, 1985),
+$$ASMD_a(x)=\frac{\bar{x}_{t,a}-{\bar{x}_{c,a}}}{\sqrt{\frac{s^{2}_{t,b} + s^{2}_{c,b}}{2}}},$$
+where $\bar{x}_{t,a}$ and $\bar{x}_{c,a}$ are, respectively, the means of covariate $x$ in the treatment and control groups after matching, and $s^{2}_{t,b}$ and $s^{2}_{c,b}$ are, correspongdingly, the sample variances treatment and control groups before matching. 
+(One reason to use the sample variances before matching rather than the sample variances after matching is to free the comparisons of the means after matching from simultaneous changes in the variances.)
+Comment on covariate balance.
+
+```{r}
+# Mean balance
+meantab(X_mat, t_ind, t_id, c_id)
+```
+
+## Question 8
+
+Estimate the average effect of treatment on the treated after matching.  Is this a good estimate?
+
+```{r}
+# Mean difference in outcomes
+t.test(re78[t_id], re78[c_id], paired = TRUE)
+
+# Alternatively, the following lines of code are taken from Ho et al. (2007)
+#library("MatchIt")
+#out_nnm	= matchit(treatment	~ age + education + black + hispanic + married + nodegree + re74 + re75,	dat	= lalonde,	method = "nearest",	ratio	= 1)
+#summary(out_nnm)
+#library("Zelig")
+#out_z = zelig(re78 ~ age + education + black + hispanic + nodegree + married + re74 + re75, data = match.data(out_nnm, "control"), model = "ls")
+#out_x = setx(out_z, data = match.data(out_nnm, "treat"), cond = TRUE)
+#out_s = sim(out_z, x = out_x)
+#summary(out_s)
+```
+
+## Question 9
+
+Try to find a better matching that improves covariate balance by better estimating the propensity score or by using a different matching procedure.
+
+## Question 10
+
+Now, let's try something different.  Install the R package 'designmatch' from CRAN.  Categorize (discretize) the continuous covariates ('age,' 'education,' 're74' and 're75') into quintiles, and use the function 'cardmatch' to find the largest pair-matched sample for which all the distributions of the covariates are perfectly balanced.  Assess covariate balance after matching.  Compute the size of the matched sample.  Estimate the average effect of treatment on the matched sample.  Comment on your results and the procedure.  Which of the above matching procedures would you favor?  The overview paper by Visconti and Zubizarreta (2018) may come handy for this and future matching endeavors!
+
+```{r}
+# Here, we use 'cardmatch' to find the largest sample of matched pairs that is balanced and has a similar distribution as a target sample of policy interest, here the treated units (for the ATT).
+library("designmatch")
+
+# Function to compute quantiles
+quantiles = function(covariate, n_quantiles) {
+     p_quantiles = seq(0, 1, 1/n_quantiles)
+     val_quantiles = quantile(covariate, probs = p_quantiles, na.rm = TRUE)
+     covariate_out = rep(NA, length(covariate))
+     for (i in 1:n_quantiles) {
+          if (i==1) {
+               covariate_out[covariate<val_quantiles[i+1]] = i
+          }
+          if (i>1 & i<n_quantiles) {
+               covariate_out[covariate>=val_quantiles[i] & covariate<val_quantiles[i+1]] = i
+          }
+          if (i==n_quantiles) {
+               covariate_out[covariate>=val_quantiles[i] & covariate<=val_quantiles[i+1]] = i
+          }
+     }
+     covariate_out
+}
+
+# Categorize the continuous covariates
+age_5 = quantiles(age, 5)
+education_5 = quantiles(education, 5)
+re74_5 = quantiles(re74, 5)
+re75_5 = quantiles(re75, 5)
+
+# Treatment indicator
+t_ind = treatment
+
+# Fine balance
+fine_covs = cbind(black, hispanic, married, nodegree, age_5, education_5, re74_5, re75_5)
+fine = list(covs = fine_covs)
+
+# Solver options
+t_max = 60*5
+solver = "glpk"
+approximate = 0
+solver = list(name = solver, t_max = t_max, approximate = approximate, round_cplex = 0, trace_cplex = 0)
+
+# Match                   
+out_1 = cardmatch(t_ind, fine = fine, solver = solver)
+
+# Indices of the treated units and matched controls
+t_id_1 = out_1$t_id  
+c_id_1 = out_1$c_id	
+
+# Mean balance
+covs = cbind(age, education, black, hispanic, married, nodegree, re74, re75)
+meantab(covs, t_ind, t_id_1, c_id_1)
+
+# Fine balance (note here we are getting an approximate solution)
+for (i in 1:ncol(fine_covs)) {		
+	print(finetab(fine_covs[, i], t_id_1, c_id_1))
+}
+
+# Mean difference in outcomes
+t.test(re78[t_id_1], re78[c_id_1])
+
+```
